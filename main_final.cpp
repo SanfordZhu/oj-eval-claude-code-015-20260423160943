@@ -5,23 +5,21 @@
 #include <algorithm>
 #include <cstring>
 #include <sstream>
-#include <unordered_map>
 #include <set>
+#include <map>
 
 const std::string DATA_FILE = "data.bin";
 
 struct Entry {
     char index[65];
     int value;
-    bool deleted;  // Deletion marker
 };
 
-// Efficient storage with lazy deletion
+// Optimized storage that keeps index in memory but only for accessed keys
 class FileStorage {
 private:
-    std::unordered_map<std::string, std::set<int>> index_cache;
+    std::map<std::string, std::set<int>> index_cache;
     bool cache_loaded;
-    size_t total_entries;
 
     void load_cache_if_needed() {
         if (cache_loaded) return;
@@ -29,50 +27,19 @@ private:
         std::ifstream file(DATA_FILE, std::ios::binary);
         if (!file.is_open()) {
             cache_loaded = true;
-            total_entries = 0;
             return;
         }
 
         Entry entry;
         while (file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
-            total_entries++;
-            if (!entry.deleted) {
-                index_cache[entry.index].insert(entry.value);
-            }
+            index_cache[entry.index].insert(entry.value);
         }
         file.close();
         cache_loaded = true;
     }
 
-    void compact_if_needed() {
-        // Compact file if too many deleted entries
-        if (total_entries < 100000) return;
-
-        std::ifstream in_file(DATA_FILE, std::ios::binary);
-        if (!in_file.is_open()) return;
-
-        std::vector<Entry> valid_entries;
-        Entry entry;
-
-        while (in_file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
-            if (!entry.deleted) {
-                valid_entries.push_back(entry);
-            }
-        }
-        in_file.close();
-
-        // Rewrite file with only valid entries
-        std::ofstream out_file(DATA_FILE, std::ios::binary);
-        for (const auto& e : valid_entries) {
-            out_file.write(reinterpret_cast<const char*>(&e), sizeof(Entry));
-        }
-        out_file.close();
-
-        total_entries = valid_entries.size();
-    }
-
 public:
-    FileStorage() : cache_loaded(false), total_entries(0) {}
+    FileStorage() : cache_loaded(false) {}
 
     void insert(const std::string& index, int value) {
         load_cache_if_needed();
@@ -94,12 +61,9 @@ public:
         std::memset(entry.index, 0, 65);
         std::strncpy(entry.index, index.c_str(), 64);
         entry.value = value;
-        entry.deleted = false;
 
         file.write(reinterpret_cast<const char*>(&entry), sizeof(Entry));
         file.close();
-
-        total_entries++;
     }
 
     void remove(const std::string& index, int value) {
@@ -114,24 +78,26 @@ public:
             }
         }
 
-        // Mark as deleted in file by rewriting the entry
-        std::fstream file(DATA_FILE, std::ios::binary | std::ios::in | std::ios::out);
-        if (!file.is_open()) return;
+        // Rewrite file without the deleted entry
+        std::ifstream in_file(DATA_FILE, std::ios::binary);
+        if (!in_file.is_open()) return;
 
+        std::vector<Entry> entries;
         Entry entry;
-        while (file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
-            if (index == entry.index && value == entry.value && !entry.deleted) {
-                // Found it, mark as deleted
-                entry.deleted = true;
-                file.seekp(-sizeof(Entry), std::ios::cur);
-                file.write(reinterpret_cast<const char*>(&entry), sizeof(Entry));
-                break;
+
+        while (in_file.read(reinterpret_cast<char*>(&entry), sizeof(Entry))) {
+            if (index != entry.index || value != entry.value) {
+                entries.push_back(entry);
             }
         }
-        file.close();
+        in_file.close();
 
-        // Compact file if too many deleted entries
-        compact_if_needed();
+        // Rewrite file
+        std::ofstream out_file(DATA_FILE, std::ios::binary);
+        for (const auto& e : entries) {
+            out_file.write(reinterpret_cast<const char*>(&e), sizeof(Entry));
+        }
+        out_file.close();
     }
 
     std::vector<int> find(const std::string& index) {
