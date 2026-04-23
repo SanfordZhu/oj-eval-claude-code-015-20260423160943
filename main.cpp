@@ -7,7 +7,7 @@
 #include <sstream>
 #include <functional>
 
-const int NUM_BUCKETS = 97; // Prime number for better distribution
+const int NUM_BUCKETS = 19; // Stay within 20 file limit (19 data files + 1 executable)
 
 struct Entry {
     char index[65];
